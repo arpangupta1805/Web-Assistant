@@ -10,15 +10,27 @@ import {
   Globe,
   Sun,
   Loader,
-  ExternalLink
+  ExternalLink,
+  Mic,
+  MicOff,
+  Volume2
 } from 'lucide-react';
 import axios from 'axios';
 import io from 'socket.io-client';
+import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition';
 
 
 const API_BASE_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
 
 function App() {
+  // Speech recognition hook
+  const {
+    transcript,
+    listening,
+    resetTranscript,
+    browserSupportsSpeechRecognition
+  } = useSpeechRecognition();
+
   // State management
   const [textInput, setTextInput] = useState('');
   const [messages, setMessages] = useState([]);
@@ -26,23 +38,92 @@ function App() {
   const [isConnected, setIsConnected] = useState(false);
   const [currentWeather, setCurrentWeather] = useState(null);
   const [notifications, setNotifications] = useState([]);
+  const [isListening, setIsListening] = useState(false);
+  const [speechRecognitionSupported, setSpeechRecognitionSupported] = useState(false);
+  const [autoStopEnabled, setAutoStopEnabled] = useState(true);
+  const [silenceTimer, setSilenceTimer] = useState(null);
   
   // Refs
   const messagesEndRef = useRef(null);
   const socketRef = useRef(null);
   const chatContainerRef = useRef(null);
+  const silenceTimerRef = useRef(null);
+  const lastTranscriptRef = useRef('');
 
   // Initialize components
   useEffect(() => {
     initializeSocketConnection();
     loadMessagesFromLocalStorage();
     
+    // Check for speech recognition support
+    setSpeechRecognitionSupported(browserSupportsSpeechRecognition);
+    
+    if (!browserSupportsSpeechRecognition) {
+      console.warn('Browser does not support speech recognition');
+      addNotification('Speech recognition not supported in this browser', 'warning');
+    }
+    
     return () => {
       if (socketRef.current) {
         socketRef.current.disconnect();
       }
+      // Clean up silence timer
+      if (silenceTimerRef.current) {
+        clearTimeout(silenceTimerRef.current);
+      }
     };
-  }, []);
+  }, [browserSupportsSpeechRecognition]);
+
+  // Handle speech recognition transcript
+  useEffect(() => {
+    if (transcript) {
+      setTextInput(transcript);
+      lastTranscriptRef.current = transcript;
+      
+      // Clear any existing silence timer
+      if (silenceTimerRef.current) {
+        clearTimeout(silenceTimerRef.current);
+      }
+      
+      // Set a new timer for auto-stop when user stops speaking
+      if (autoStopEnabled && listening && transcript.trim()) {
+        silenceTimerRef.current = setTimeout(() => {
+          handleAutoStop();
+        }, 3000); // Wait 3 seconds after user stops speaking
+      }
+    }
+  }, [transcript, listening, autoStopEnabled]);
+
+  // Handle listening state
+  useEffect(() => {
+    setIsListening(listening);
+  }, [listening]);
+
+  // Audio beep functions
+  const playBeep = (frequency = 800, duration = 200) => {
+    try {
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      oscillator.frequency.value = frequency;
+      oscillator.type = 'sine';
+      
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration / 1000);
+      
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + duration / 1000);
+    } catch (error) {
+      console.log('Audio not supported:', error);
+    }
+  };
+
+  const playStartBeep = () => playBeep(800, 200); // Higher pitch for start
+  const playStopBeep = () => playBeep(400, 200);  // Lower pitch for stop
 
   // LocalStorage management functions
   const getStorageSize = () => {
@@ -320,6 +401,86 @@ function App() {
     }, 100);
   };
 
+  // Speech recognition functions
+  const handleAutoStop = () => {
+    if (listening) {
+      console.log('Auto-stopping listening due to silence');
+      stopListening();
+      addNotification('Stopped listening due to silence', 'info');
+    }
+  };
+
+  const clearSilenceTimer = () => {
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+  };
+
+  const startListening = () => {
+    if (!speechRecognitionSupported) {
+      addNotification('Speech recognition not supported', 'error');
+      return;
+    }
+    
+    clearSilenceTimer();
+    resetTranscript();
+    setTextInput('');
+    lastTranscriptRef.current = '';
+    
+    // Play start beep
+    playStartBeep();
+    
+    SpeechRecognition.startListening({ 
+      continuous: true,
+      language: 'en-US'
+    });
+    
+    const message = autoStopEnabled 
+      ? 'Listening... Will auto-stop when you stop speaking'
+      : 'Listening... Click mic to stop';
+    addNotification(message, 'info');
+  };
+
+  const stopListening = () => {
+    clearSilenceTimer();
+    
+    // Play stop beep
+    playStopBeep();
+    
+    SpeechRecognition.stopListening();
+    addNotification('Stopped listening', 'info');
+  };
+
+  const toggleListening = () => {
+    if (listening) {
+      stopListening();
+    } else {
+      startListening();
+    }
+  };
+
+  const toggleAutoStop = () => {
+    setAutoStopEnabled(prev => {
+      const newValue = !prev;
+      const message = newValue 
+        ? 'Auto-stop enabled - Mic will turn off when you stop speaking'
+        : 'Auto-stop disabled - Manual mic control only';
+      addNotification(message, 'info');
+      return newValue;
+    });
+  };
+
+  const handleSpeechCommand = () => {
+    if (transcript.trim()) {
+      clearSilenceTimer();
+      handleCommand(transcript);
+      resetTranscript();
+      setTextInput('');
+      stopListening();
+    }
+  };
+
   const handleCommand = async (command) => {
     if (!command.trim()) return;
     
@@ -456,6 +617,17 @@ function App() {
             
             
             
+            {/* Speech Settings */}
+            {speechRecognitionSupported && (
+              <button 
+                onClick={toggleAutoStop}
+                className={`btn-secondary p-2 ${autoStopEnabled ? 'ring-2 ring-green-500/50' : ''}`}
+                title={`Auto-stop: ${autoStopEnabled ? 'ON' : 'OFF'}`}
+              >
+                <Volume2 className={`w-4 h-4 ${autoStopEnabled ? 'text-green-400' : 'text-gray-400'}`} />
+              </button>
+            )}
+            
             {/* Settings */}
             <button className="btn-secondary p-2">
               <Settings className="w-4 h-4" />
@@ -500,6 +672,8 @@ function App() {
                 <h2 className="text-2xl font-bold mb-2">Welcome to Dhanush AI</h2>
                 <p className="text-gray-400 mb-6">
                   Your intelligent voice assistant for music, weather, and queries to solve!
+                  <br />
+                  <span className="text-blue-400 text-sm">🎤 Click the microphone to use voice commands</span>
                 </p>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4 max-w-2xl mx-auto">
                   <div className="glass p-4 rounded-lg text-center">
@@ -577,7 +751,62 @@ function App() {
 
         {/* Input Area */}
         <div className="glass rounded-xl p-4 border border-white/10">
-          <div className="flex items-center space-x-4">
+          {/* Speech Recognition Status */}
+          {isListening && (
+            <div className="mb-3 p-3 bg-blue-500/20 border border-blue-500/30 rounded-lg">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+                  <span className="text-sm text-blue-400 font-medium">Listening...</span>
+                  {autoStopEnabled && (
+                    <span className="text-xs text-green-400 bg-green-500/20 px-2 py-1 rounded-full">
+                      Auto-stop ON
+                    </span>
+                  )}
+                </div>
+                <button
+                  onClick={toggleAutoStop}
+                  className={`text-xs px-2 py-1 rounded-lg transition-colors ${
+                    autoStopEnabled 
+                      ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30' 
+                      : 'bg-gray-500/20 text-gray-400 hover:bg-gray-500/30'
+                  }`}
+                  title={autoStopEnabled ? 'Disable auto-stop' : 'Enable auto-stop'}
+                >
+                  {autoStopEnabled ? 'Auto-stop' : 'Manual'}
+                </button>
+              </div>
+              {transcript && (
+                <div className="text-sm text-gray-300">
+                  <span className="text-gray-400">Recognized: </span>
+                  <span className="text-white">{transcript}</span>
+                  {autoStopEnabled && transcript.trim() && (
+                    <span className="text-xs text-yellow-400 ml-2">
+                      (Auto-stopping in 3s if silence...)
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+          
+          <div className="flex items-center space-x-3">
+            {/* Microphone Button */}
+            {speechRecognitionSupported && (
+              <button
+                onClick={toggleListening}
+                disabled={isLoading}
+                className={`p-3 rounded-xl transition-all duration-200 ${
+                  isListening 
+                    ? 'bg-red-500 hover:bg-red-600 text-white shadow-lg shadow-red-500/25' 
+                    : 'bg-green-500 hover:bg-green-600 text-white shadow-lg shadow-green-500/25'
+                } disabled:opacity-50 disabled:cursor-not-allowed`}
+                title={isListening ? 'Stop listening' : 'Start voice input'}
+              >
+                {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+              </button>
+            )}
+
             {/* Text Input */}
             <div className="flex-1 relative">
               <input
@@ -585,7 +814,7 @@ function App() {
                 value={textInput}
                 onChange={(e) => setTextInput(e.target.value)}
                 onKeyPress={(e) => e.key === 'Enter' && handleCommand(textInput)}
-                placeholder="Type your message..."
+                placeholder={isListening ? "Speak your command..." : "Type your message..."}
                 className="input-field w-full pr-12"
                 disabled={isLoading}
               />
@@ -599,6 +828,18 @@ function App() {
                 <Send className="w-4 h-4" />
               </button>
             </div>
+
+            {/* Send Speech Command Button (show when there's transcript from speech) */}
+            {transcript && transcript.trim() && (
+              <button
+                onClick={handleSpeechCommand}
+                disabled={isLoading}
+                className="btn-primary px-4 py-3 disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Send voice command"
+              >
+                <Send className="w-5 h-5" />
+              </button>
+            )}
           </div>
         </div>
       </main>
