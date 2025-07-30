@@ -34,10 +34,6 @@
   .chat-bubble-ai {
     @apply bg-white/5 backdrop-blur-md border border-white/10 bg-slate-700/50 text-white rounded-xl px-4 py-3 max-w-xs mr-auto;
   }
-  
-  .listening-animation {
-    animation: glow 1.5s ease-in-out infinite alternate;
-  }
 }
 
 /* Custom scrollbar */
@@ -67,32 +63,31 @@
   box-shadow: 0 0 20px rgba(59, 130, 246, 0.5);
 }
 
-/* Voice wave animation */
-@keyframes wave {
-  0%, 100% {
-    transform: scaleY(1);
+/* URL Link Styles */
+.message-link {
+  @apply text-blue-400 underline hover:text-blue-300 transition-colors duration-200 cursor-pointer;
+}
+
+.message-link:hover {
+  @apply shadow-sm;
+}
+
+.youtube-link {
+  @apply text-red-400 hover:text-red-300;
+}
+
+/* Notification animations */
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
   }
-  50% {
-    transform: scaleY(2);
+  to {
+    transform: translateX(0);
+    opacity: 1;
   }
 }
 
-.voice-wave {
-  animation: wave 1s ease-in-out infinite;
-}
-
-.voice-wave:nth-child(2) {
-  animation-delay: 0.1s;
-}
-
-.voice-wave:nth-child(3) {
-  animation-delay: 0.2s;
-}
-
-.voice-wave:nth-child(4) {
-  animation-delay: 0.3s;
-}
-
-.voice-wave:nth-child(5) {
-  animation-delay: 0.4s;
+.notification-enter {
+  animation: slideInRight 0.3s ease-out;
 }

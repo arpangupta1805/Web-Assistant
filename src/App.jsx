@@ -1,12 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
-  Mic, 
-  MicOff, 
   Send, 
-  Volume2, 
-  VolumeX, 
-  Play, 
-  Pause,
   Cloud, 
   Clock,
   Zap,
@@ -15,37 +9,31 @@ import {
   Youtube,
   Globe,
   Sun,
-  Loader
+  Loader,
+  ExternalLink
 } from 'lucide-react';
 import axios from 'axios';
 import io from 'socket.io-client';
 
-const API_BASE_URL = 'http://localhost:8000';
+
+const API_BASE_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
 
 function App() {
   // State management
-  const [isListening, setIsListening] = useState(false);
   const [textInput, setTextInput] = useState('');
   const [messages, setMessages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [isSpeaking, setIsSpeaking] = useState(false);
-  const [currentVolume, setCurrentVolume] = useState(50);
-  const [isMuted, setIsMuted] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
-  const [audioEnabled, setAudioEnabled] = useState(true);
   const [currentWeather, setCurrentWeather] = useState(null);
+  const [notifications, setNotifications] = useState([]);
   
   // Refs
-  const recognitionRef = useRef(null);
-  const synthRef = useRef(null);
   const messagesEndRef = useRef(null);
   const socketRef = useRef(null);
   const chatContainerRef = useRef(null);
 
-  // Initialize speech recognition and synthesis
+  // Initialize components
   useEffect(() => {
-    initializeSpeechRecognition();
-    initializeSpeechSynthesis();
     initializeSocketConnection();
     loadMessagesFromLocalStorage();
     
@@ -148,43 +136,6 @@ function App() {
     console.log('Chat history cleared');
   };
 
-  const initializeSpeechRecognition = () => {
-    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-      const SpeechRecognition = window.webkitSpeechRecognition || window.SpeechRecognition;
-      recognitionRef.current = new SpeechRecognition();
-      
-      recognitionRef.current.continuous = false;
-      recognitionRef.current.interimResults = false;
-      recognitionRef.current.lang = 'en-US';
-
-      recognitionRef.current.onstart = () => {
-        setIsListening(true);
-      };
-
-      recognitionRef.current.onresult = (event) => {
-        const transcript = event.results[0][0].transcript;
-        setTextInput(transcript);
-        handleCommand(transcript);
-        setIsListening(false);
-      };
-
-      recognitionRef.current.onerror = (event) => {
-        console.error('Speech recognition error:', event.error);
-        setIsListening(false);
-      };
-
-      recognitionRef.current.onend = () => {
-        setIsListening(false);
-      };
-    }
-  };
-
-  const initializeSpeechSynthesis = () => {
-    if ('speechSynthesis' in window) {
-      synthRef.current = window.speechSynthesis;
-    }
-  };
-
   const initializeSocketConnection = () => {
     socketRef.current = io(API_BASE_URL);
     
@@ -206,6 +157,11 @@ function App() {
     socketRef.current.on('action_completed', (data) => {
       // Handle completed actions (like opening websites, playing music)
       handleActionCompleted(data);
+    });
+
+    socketRef.current.on('open_url', (data) => {
+      // Handle URL opening requests from backend
+      handleOpenUrl(data);
     });
   };
 
@@ -234,15 +190,6 @@ function App() {
           timestamp: new Date()
         };
         newMessages.push(newMessage);
-        
-        // If it's a complete message, speak it after a longer delay to ensure UI is updated
-        if (data.is_complete && (data.complete_text || data.chunk) && audioEnabled) {
-          setTimeout(() => {
-            const textToSpeak = data.complete_text || data.chunk;
-            console.log('Speaking new complete message:', textToSpeak);
-            speakText(textToSpeak);
-          }, 200);
-        }
       } else if (lastAiMessage) {
         // Update existing AI message
         if (data.complete_text) {
@@ -253,14 +200,6 @@ function App() {
         
         // Update streaming status
         lastAiMessage.isStreaming = !data.is_complete;
-        
-        // Speak when streaming is complete and we have the full text
-        if (data.is_complete && audioEnabled && lastAiMessage.text.trim()) {
-          setTimeout(() => {
-            console.log('Speaking complete streamed message:', lastAiMessage.text);
-            speakText(lastAiMessage.text);
-          }, 200);
-        }
       }
       
       return newMessages;
@@ -270,27 +209,9 @@ function App() {
     setTimeout(() => {
       saveMessagesToLocalStorage();
     }, 100);
-  }, [audioEnabled]);
+  }, []);
 
   // Function to speak any message
-  const speakMessage = (text) => {
-    if (!synthRef.current || isMuted) return;
-    
-    // Cancel any ongoing speech
-    synthRef.current.cancel();
-    
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 0.9;
-    utterance.pitch = 1;
-    utterance.volume = currentVolume / 100;
-    
-    utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = () => setIsSpeaking(false);
-    utterance.onerror = () => setIsSpeaking(false);
-    
-    synthRef.current.speak(utterance);
-  };
-
   const handleActionCompleted = (data) => {
     console.log('Action completed:', data);
     if (data.type === 'website_opened') {
@@ -301,6 +222,41 @@ function App() {
       setCurrentWeather(data.weather);
       // Weather response is already handled in the main response
     }
+  };
+
+  const handleOpenUrl = (data) => {
+    console.log('Received open_url event:', data);
+    
+    if (data.url) {
+      // Automatically open URL in a new tab
+      window.open(data.url, '_blank');
+      
+      // Add a notification
+      const notificationMessage = data.type === 'music' 
+        ? `🎵 Opening music: ${data.url}` 
+        : data.type === 'website'
+        ? `🌐 Opening website: ${data.url}`
+        : `🔗 Opening: ${data.url}`;
+      
+      addNotification(notificationMessage, 'success');
+      console.log(notificationMessage);
+    }
+  };
+
+  const addNotification = (message, type = 'info') => {
+    const notification = {
+      id: Date.now(),
+      message,
+      type,
+      timestamp: new Date()
+    };
+    
+    setNotifications(prev => [...prev, notification]);
+    
+    // Auto-remove notification after 5 seconds
+    setTimeout(() => {
+      setNotifications(prev => prev.filter(n => n.id !== notification.id));
+    }, 5000);
   };
 
   const addMessage = (type, text, data = null) => {
@@ -365,48 +321,7 @@ function App() {
   };
 
   const speakText = (text) => {
-    if (!synthRef.current || !audioEnabled || isMuted || !text || !text.trim()) {
-      console.log('Speech cancelled:', { 
-        hassynth: !!synthRef.current, 
-        audioEnabled, 
-        isMuted, 
-        hasText: !!text?.trim() 
-      });
-      return;
-    }
-    
-    // Cancel any ongoing speech
-    synthRef.current.cancel();
-    
-    // Clean the text for better speech
-    const cleanText = text.replace(/[🎵🌐🌤️]/g, '').trim();
-    
-    console.log('Starting speech synthesis for:', cleanText);
-    
-    const utterance = new SpeechSynthesisUtterance(cleanText);
-    utterance.rate = 0.9;
-    utterance.pitch = 1;
-    utterance.volume = currentVolume / 100;
-    
-    utterance.onstart = () => {
-      console.log('Speech started');
-      setIsSpeaking(true);
-    };
-    
-    utterance.onend = () => {
-      console.log('Speech ended');
-      setIsSpeaking(false);
-    };
-    
-    utterance.onerror = (e) => {
-      console.error('Speech error:', e);
-      setIsSpeaking(false);
-    };
-    
-    // Add a small delay to ensure the speech synthesis engine is ready
-    setTimeout(() => {
-      synthRef.current.speak(utterance);
-    }, 50);
+    // Audio functionality removed
   };
 
   const handleCommand = async (command) => {
@@ -432,11 +347,6 @@ function App() {
 
         if (response.data.success) {
           addMessage('ai', response.data.response, response.data.data);
-          
-          // Speak the response if audio is enabled
-          if (audioEnabled) {
-            speakText(response.data.response);
-          }
         } else {
           addMessage('ai', response.data.response || 'Sorry, I encountered an error.');
         }
@@ -451,33 +361,62 @@ function App() {
   };
 
   const startListening = () => {
-    if (recognitionRef.current && !isListening) {
-      recognitionRef.current.start();
-    }
+    // Audio functionality removed
   };
 
   const stopListening = () => {
-    if (recognitionRef.current && isListening) {
-      recognitionRef.current.stop();
-    }
+    // Audio functionality removed
   };
 
   const toggleMute = () => {
-    setIsMuted(!isMuted);
-    if (synthRef.current) {
-      if (!isMuted) {
-        synthRef.current.cancel();
-        setIsSpeaking(false);
-      }
-    }
+    // Audio functionality removed
   };
 
   const handleVolumeChange = (newVolume) => {
-    setCurrentVolume(newVolume);
+    // Audio functionality removed
   };
 
   const formatTime = (date) => {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const renderMessageWithLinks = (text) => {
+    // URL detection regex that matches http/https URLs
+    const urlRegex = /(https?:\/\/[^\s<>"{}|\\^`[\]]+)/g;
+    
+    const parts = text.split(urlRegex);
+    
+    return parts.map((part, index) => {
+      if (urlRegex.test(part)) {
+        // Determine the type of URL for appropriate styling
+        const isYouTube = part.includes('youtube.com') || part.includes('youtu.be');
+        const isMusic = isYouTube || part.includes('spotify.com') || part.includes('soundcloud.com');
+        
+        return (
+          <span key={index} className="inline-flex items-center gap-1">
+            <a
+              href={part}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`${
+                isMusic 
+                  ? 'text-red-400 hover:text-red-300' 
+                  : 'text-blue-400 hover:text-blue-300'
+              } underline transition-colors duration-200 break-all inline-flex items-center gap-1`}
+              onClick={(e) => {
+                e.stopPropagation();
+                console.log('User clicked URL:', part);
+              }}
+            >
+              {isYouTube && <Youtube className="w-4 h-4 inline" />}
+              {!isMusic && <ExternalLink className="w-3 h-3 inline" />}
+              {part}
+            </a>
+          </span>
+        );
+      }
+      return part;
+    });
   };
 
   return (
@@ -492,7 +431,7 @@ function App() {
             <div>
               <h1 className="text-xl font-bold">Dhanush AI Assistant</h1>
               <p className="text-sm text-gray-400">
-                {isConnected ? '🟢 Connected' : '🔴 Disconnected'}
+                {isConnected ? '🟢 Connected' : '� Connecting...'}
               </p>
             </div>
           </div>
@@ -513,27 +452,6 @@ function App() {
               <span className="text-xs">{messages.length} msgs</span>
             </div>
             
-            {/* Audio Controls */}
-            <div className="flex items-center space-x-2">
-              <button
-                onClick={toggleMute}
-                className="btn-secondary p-2"
-                title={isMuted ? 'Unmute' : 'Mute'}
-              >
-                {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-              </button>
-              
-              <input
-                type="range"
-                min="0"
-                max="100"
-                value={currentVolume}
-                onChange={(e) => handleVolumeChange(parseInt(e.target.value))}
-                className="w-20 accent-primary-600"
-                title="Volume"
-              />
-            </div>
-            
             {/* Clear Chat Button */}
             <button 
               onClick={clearChatHistory}
@@ -543,6 +461,8 @@ function App() {
               <MessageCircle className="w-4 h-4" />
             </button>
             
+            
+            
             {/* Settings */}
             <button className="btn-secondary p-2">
               <Settings className="w-4 h-4" />
@@ -550,6 +470,26 @@ function App() {
           </div>
         </div>
       </header>
+
+      {/* Notifications */}
+      {notifications.length > 0 && (
+        <div className="fixed top-20 right-4 z-50 space-y-2">
+          {notifications.map((notification) => (
+            <div
+              key={notification.id}
+              className={`glass border border-white/10 rounded-lg p-3 max-w-sm transform transition-all duration-300 ${
+                notification.type === 'success' 
+                  ? 'border-green-500/30 bg-green-500/10' 
+                  : notification.type === 'error'
+                  ? 'border-red-500/30 bg-red-500/10'
+                  : 'border-blue-500/30 bg-blue-500/10'
+              }`}
+            >
+              <p className="text-sm text-white">{notification.message}</p>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col max-w-6xl mx-auto w-full p-4">
@@ -566,9 +506,9 @@ function App() {
                 </div>
                 <h2 className="text-2xl font-bold mb-2">Welcome to Dhanush AI</h2>
                 <p className="text-gray-400 mb-6">
-                  Your intelligent voice assistant for web browsing, music, weather, and more!
+                  Your intelligent voice assistant for music, weather, and queries to solve!
                 </p>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-2xl mx-auto">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 max-w-2xl mx-auto">
                   <div className="glass p-4 rounded-lg text-center">
                     <Youtube className="w-8 h-8 text-red-500 mx-auto mb-2" />
                     <h3 className="font-semibold mb-1">Music & Videos</h3>
@@ -576,8 +516,13 @@ function App() {
                   </div>
                   <div className="glass p-4 rounded-lg text-center">
                     <Globe className="w-8 h-8 text-blue-500 mx-auto mb-2" />
+                    <h3 className="font-semibold mb-1">Clear Queries: By Asking AI</h3>
+                    <p className="text-sm text-gray-400">"What is force?"</p>
+                  </div>
+                  <div className="glass p-4 rounded-lg text-center">
+                    <Globe className="w-8 h-8 text-blue-500 mx-auto mb-2" />
                     <h3 className="font-semibold mb-1">Web Browsing</h3>
-                    <p className="text-sm text-gray-400">"Open YouTube"</p>
+                    <p className="text-sm text-gray-400">"Open Youtube"</p>
                   </div>
                   <div className="glass p-4 rounded-lg text-center">
                     <Cloud className="w-8 h-8 text-green-500 mx-auto mb-2" />
@@ -605,7 +550,7 @@ function App() {
                     message.type === 'user' ? 'chat-bubble-user' : 'chat-bubble-ai'
                   } relative group`}>
                     <p className="text-sm leading-relaxed">
-                      {message.text}
+                      {renderMessageWithLinks(message.text)}
                       {message.isStreaming && (
                         <span className="inline-block w-2 h-4 bg-primary-500 ml-1 animate-pulse"></span>
                       )}
@@ -614,16 +559,6 @@ function App() {
                       <span className="text-xs opacity-60">
                         {formatTime(message.timestamp)}
                       </span>
-                      {/* Speaker button for all messages */}
-                      {message.text.trim() && !message.isStreaming && (
-                        <button
-                          onClick={() => speakMessage(message.text)}
-                          className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 p-1 rounded hover:bg-white/10"
-                          title="Speak this message"
-                        >
-                          <Volume2 className="w-3 h-3" />
-                        </button>
-                      )}
                     </div>
                   </div>
                 </div>
@@ -650,30 +585,6 @@ function App() {
         {/* Input Area */}
         <div className="glass rounded-xl p-4 border border-white/10">
           <div className="flex items-center space-x-4">
-            {/* Voice Button */}
-            <button
-              onClick={isListening ? stopListening : startListening}
-              className={`p-4 rounded-xl transition-all duration-200 ${
-                isListening 
-                  ? 'bg-red-600 hover:bg-red-700 listening-animation' 
-                  : 'btn-primary'
-              }`}
-              disabled={isLoading}
-            >
-              {isListening ? (
-                <>
-                  <MicOff className="w-6 h-6" />
-                  <div className="flex items-center space-x-1 mt-1">
-                    {[...Array(5)].map((_, i) => (
-                      <div key={i} className="w-1 h-4 bg-white voice-wave rounded-full"></div>
-                    ))}
-                  </div>
-                </>
-              ) : (
-                <Mic className="w-6 h-6" />
-              )}
-            </button>
-            
             {/* Text Input */}
             <div className="flex-1 relative">
               <input
@@ -681,35 +592,19 @@ function App() {
                 value={textInput}
                 onChange={(e) => setTextInput(e.target.value)}
                 onKeyPress={(e) => e.key === 'Enter' && handleCommand(textInput)}
-                placeholder="Type your message or use voice..."
+                placeholder="Type your message..."
                 className="input-field w-full pr-12"
-                disabled={isLoading || isListening}
+                disabled={isLoading}
               />
               
               {/* Send Button */}
               <button
                 onClick={() => handleCommand(textInput)}
-                disabled={!textInput.trim() || isLoading || isListening}
+                disabled={!textInput.trim() || isLoading}
                 className="absolute right-2 top-1/2 transform -translate-y-1/2 btn-primary p-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Send className="w-4 h-4" />
               </button>
-            </div>
-            
-            {/* Status Indicators */}
-            <div className="flex items-center space-x-2">
-              {isSpeaking && (
-                <div className="flex items-center space-x-1 text-primary-400">
-                  <Volume2 className="w-4 h-4" />
-                  <span className="text-xs">Speaking</span>
-                </div>
-              )}
-              
-              {audioEnabled && (
-                <div className="text-green-400 text-xs">
-                  🎵 Audio On
-                </div>
-              )}
             </div>
           </div>
         </div>
