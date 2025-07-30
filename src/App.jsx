@@ -320,10 +320,6 @@ function App() {
     }, 100);
   };
 
-  const speakText = (text) => {
-    // Audio functionality removed
-  };
-
   const handleCommand = async (command) => {
     if (!command.trim()) return;
     
@@ -331,6 +327,19 @@ function App() {
     addMessage('user', command);
     
     try {
+      // Check for volume/audio control commands and provide specific response
+      const volumeKeywords = ['volume', 'mute', 'unmute', 'sound', 'audio level', 'turn up', 'turn down', 'louder', 'quieter', 'increase volume', 'decrease volume'];
+      const isVolumeCommand = volumeKeywords.some(keyword => 
+        command.toLowerCase().includes(keyword.toLowerCase())
+      );
+      
+      if (isVolumeCommand) {
+        addMessage('ai', "I'm sorry, but volume controls cannot be managed through a web browser due to security restrictions. Please use your device's built-in volume controls or the controls on the video/audio player directly.");
+        setIsLoading(false);
+        setTextInput('');
+        return;
+      }
+
       if (isConnected && socketRef.current) {
         // Use Socket.IO for real-time processing
         // Don't create initial message here - let updateMessageInRealTime handle it
@@ -358,22 +367,6 @@ function App() {
       setIsLoading(false);
       setTextInput('');
     }
-  };
-
-  const startListening = () => {
-    // Audio functionality removed
-  };
-
-  const stopListening = () => {
-    // Audio functionality removed
-  };
-
-  const toggleMute = () => {
-    // Audio functionality removed
-  };
-
-  const handleVolumeChange = (newVolume) => {
-    // Audio functionality removed
   };
 
   const formatTime = (date) => {
