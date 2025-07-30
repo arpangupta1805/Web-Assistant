@@ -1,0 +1,7 @@
+<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background circle -->
+  <circle cx="8" cy="8" r="8" fill="#2563EB"/>
+  
+  <!-- Simple lightning bolt for small size -->
+  <path d="M9.5 3L6.5 8H8.5L6.5 13L9.5 8H7.5L9.5 3Z" fill="white"/>
+</svg>
