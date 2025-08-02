@@ -18,18 +18,19 @@ import {
 import axios from 'axios';
 import io from 'socket.io-client';
 import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition';
+import { checkSpeechRecognitionSupport, requestMicrophonePermission, initializeSpeechRecognition } from './utils/speechRecognition';
+import { useEnhancedSpeechRecognition } from './hooks/useEnhancedSpeechRecognition';
 
 
 const API_BASE_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
 
 function App() {
-  // Speech recognition hook
-  const {
-    transcript,
-    listening,
-    resetTranscript,
-    browserSupportsSpeechRecognition
-  } = useSpeechRecognition();
+  // Try both speech recognition approaches
+  const reactSpeechRecognition = useSpeechRecognition();
+  const enhancedSpeechRecognition = useEnhancedSpeechRecognition();
+  
+  // Choose the best available approach
+  const speechRecognition = enhancedSpeechRecognition.isSupported ? enhancedSpeechRecognition : reactSpeechRecognition;
 
   // State management
   const [textInput, setTextInput] = useState('');
@@ -43,6 +44,11 @@ function App() {
   const [autoStopEnabled, setAutoStopEnabled] = useState(true);
   const [silenceTimer, setSilenceTimer] = useState(null);
   
+  // Get the current transcript and listening state
+  const transcript = speechRecognition.transcript || '';
+  const listening = speechRecognition.listening || speechRecognition.isListening || false;
+  const browserSupportsSpeechRecognition = reactSpeechRecognition.browserSupportsSpeechRecognition || enhancedSpeechRecognition.isSupported;
+  
   // Refs
   const messagesEndRef = useRef(null);
   const socketRef = useRef(null);
@@ -55,13 +61,52 @@ function App() {
     initializeSocketConnection();
     loadMessagesFromLocalStorage();
     
-    // Check for speech recognition support
-    setSpeechRecognitionSupported(browserSupportsSpeechRecognition);
+    // Initialize speech recognition with enhanced checking
+    const initSpeech = () => {
+      console.log('Initializing speech recognition...');
+      
+      // First, try to initialize the speech recognition API
+      const initResult = initializeSpeechRecognition();
+      if (!initResult.success) {
+        console.error('Speech recognition initialization failed:', initResult.error);
+        
+        let message = 'Speech recognition not available';
+        if (initResult.error === 'HTTPS_REQUIRED') {
+          message = 'Speech recognition requires HTTPS. Please use a secure connection.';
+        } else if (initResult.error === 'NOT_SUPPORTED') {
+          message = 'Speech recognition not supported in this browser. Try Chrome or Edge.';
+        }
+        
+        addNotification(message, 'warning');
+        setSpeechRecognitionSupported(false);
+        return;
+      }
+      
+      // Check browser support from react-speech-recognition
+      console.log('browserSupportsSpeechRecognition:', browserSupportsSpeechRecognition);
+      
+      if (!browserSupportsSpeechRecognition) {
+        console.warn('Browser does not support speech recognition (react-speech-recognition)');
+        addNotification('Speech recognition not supported in this browser. Try Chrome or Edge.', 'warning');
+        setSpeechRecognitionSupported(false);
+        return;
+      }
+      
+      // Additional support check
+      const support = checkSpeechRecognitionSupport();
+      if (!support.isSupported) {
+        console.error('Speech recognition support check failed:', support);
+        setSpeechRecognitionSupported(false);
+        return;
+      }
+      
+      setSpeechRecognitionSupported(true);
+      console.log('Speech recognition initialized successfully');
+      addNotification('Speech recognition is ready! 🎤', 'success');
+    };
     
-    if (!browserSupportsSpeechRecognition) {
-      console.warn('Browser does not support speech recognition');
-      addNotification('Speech recognition not supported in this browser', 'warning');
-    }
+    // Delay initialization slightly to ensure all components are ready
+    setTimeout(initSpeech, 500);
     
     return () => {
       if (socketRef.current) {
@@ -98,6 +143,76 @@ function App() {
   useEffect(() => {
     setIsListening(listening);
   }, [listening]);
+
+  // Add speech recognition error handling
+  useEffect(() => {
+    if (speechRecognitionSupported) {
+      // Handle enhanced speech recognition errors
+      if (enhancedSpeechRecognition.isSupported && enhancedSpeechRecognition.error) {
+        console.error('Enhanced speech recognition error:', enhancedSpeechRecognition.error);
+        let errorMessage = 'Speech recognition error occurred';
+        
+        switch (enhancedSpeechRecognition.error) {
+          case 'network':
+            errorMessage = 'Network error occurred. Please check your internet connection.';
+            break;
+          case 'not-allowed':
+            errorMessage = 'Microphone access denied. Please allow microphone permissions.';
+            break;
+          case 'no-speech':
+            errorMessage = 'No speech detected. Please try speaking again.';
+            break;
+          case 'audio-capture':
+            errorMessage = 'Microphone not found or not working. Please check your microphone.';
+            break;
+          case 'service-not-allowed':
+            errorMessage = 'Speech recognition service not allowed. Please use HTTPS.';
+            break;
+          default:
+            errorMessage = `Speech recognition error: ${enhancedSpeechRecognition.error}`;
+        }
+        
+        addNotification(errorMessage, 'error');
+        setIsListening(false);
+      }
+      
+      // Fallback to react-speech-recognition error handling
+      if (!enhancedSpeechRecognition.isSupported) {
+        SpeechRecognition.onError = (event) => {
+          console.error('React speech recognition error:', event);
+          let errorMessage = 'Speech recognition error occurred';
+          
+          switch (event.error) {
+            case 'network':
+              errorMessage = 'Network error occurred. Please check your internet connection.';
+              break;
+            case 'not-allowed':
+              errorMessage = 'Microphone access denied. Please allow microphone permissions.';
+              break;
+            case 'no-speech':
+              errorMessage = 'No speech detected. Please try speaking again.';
+              break;
+            case 'audio-capture':
+              errorMessage = 'Microphone not found or not working. Please check your microphone.';
+              break;
+            case 'service-not-allowed':
+              errorMessage = 'Speech recognition service not allowed. Please use HTTPS.';
+              break;
+            default:
+              errorMessage = `Speech recognition error: ${event.error}`;
+          }
+          
+          addNotification(errorMessage, 'error');
+          setIsListening(false);
+        };
+
+        SpeechRecognition.onEnd = () => {
+          console.log('React speech recognition ended');
+          setIsListening(false);
+        };
+      }
+    }
+  }, [speechRecognitionSupported, enhancedSpeechRecognition.error, enhancedSpeechRecognition.isSupported]);
 
   // Audio beep functions
   const playBeep = (frequency = 800, duration = 200) => {
@@ -417,29 +532,72 @@ function App() {
     }
   };
 
-  const startListening = () => {
+  const resetTranscript = () => {
+    if (enhancedSpeechRecognition.isSupported) {
+      enhancedSpeechRecognition.resetTranscript();
+    } else {
+      reactSpeechRecognition.resetTranscript();
+    }
+  };
+
+  const startListening = async () => {
     if (!speechRecognitionSupported) {
       addNotification('Speech recognition not supported', 'error');
       return;
     }
     
-    clearSilenceTimer();
-    resetTranscript();
-    setTextInput('');
-    lastTranscriptRef.current = '';
-    
-    // Play start beep
-    playStartBeep();
-    
-    SpeechRecognition.startListening({ 
-      continuous: true,
-      language: 'en-US'
-    });
-    
-    const message = autoStopEnabled 
-      ? 'Listening... Will auto-stop when you stop speaking'
-      : 'Listening... Click mic to stop';
-    addNotification(message, 'info');
+    try {
+      clearSilenceTimer();
+      resetTranscript();
+      setTextInput('');
+      lastTranscriptRef.current = '';
+      
+      // Play start beep
+      playStartBeep();
+      
+      console.log('Starting speech recognition...');
+      
+      let success = false;
+      if (enhancedSpeechRecognition.isSupported) {
+        success = await enhancedSpeechRecognition.startListening();
+      } else {
+        // Fallback to react-speech-recognition
+        const support = checkSpeechRecognitionSupport();
+        if (!support.isSupported) {
+          let message = 'Speech recognition not available';
+          if (support.error === 'HTTPS_REQUIRED') {
+            message = 'Speech recognition requires HTTPS. Please use a secure connection.';
+          } else if (support.error === 'NOT_SUPPORTED') {
+            message = 'Speech recognition not supported in this browser. Try Chrome or Edge.';
+          }
+          addNotification(message, 'error');
+          return;
+        }
+        
+        const permissionResult = await requestMicrophonePermission();
+        if (!permissionResult.success) {
+          addNotification(permissionResult.error, 'error');
+          return;
+        }
+        
+        SpeechRecognition.startListening({ 
+          continuous: true,
+          language: 'en-US'
+        });
+        success = true;
+      }
+      
+      if (success) {
+        console.log('Speech recognition started successfully');
+        const message = autoStopEnabled 
+          ? 'Listening... Will auto-stop when you stop speaking'
+          : 'Listening... Click mic to stop';
+        addNotification(message, 'info');
+      }
+    } catch (error) {
+      console.error('Error starting speech recognition:', error);
+      addNotification('Failed to start speech recognition. Please try again.', 'error');
+    }
   };
 
   const stopListening = () => {
@@ -448,7 +606,12 @@ function App() {
     // Play stop beep
     playStopBeep();
     
-    SpeechRecognition.stopListening();
+    if (enhancedSpeechRecognition.isSupported) {
+      enhancedSpeechRecognition.stopListening();
+    } else {
+      SpeechRecognition.stopListening();
+    }
+    
     addNotification('Stopped listening', 'info');
   };
 
@@ -748,6 +911,29 @@ function App() {
           
           <div ref={messagesEndRef} />
         </div>
+
+        {/* Debug Panel for Speech Recognition (only show if not supported) */}
+        {!speechRecognitionSupported && (
+          <div className="mb-4 p-4 bg-yellow-500/20 border border-yellow-500/30 rounded-lg">
+            <h3 className="text-lg font-semibold text-yellow-400 mb-2">Speech Recognition Debug Info</h3>
+            <div className="text-sm space-y-1">
+              <div>Protocol: <span className="text-blue-400">{location.protocol}</span></div>
+              <div>Hostname: <span className="text-blue-400">{location.hostname}</span></div>
+              <div>Secure Context: <span className="text-blue-400">{window.isSecureContext ? 'Yes' : 'No'}</span></div>
+              <div>SpeechRecognition API: <span className="text-blue-400">{window.SpeechRecognition ? 'Available' : 'Not Available'}</span></div>
+              <div>WebKit SpeechRecognition: <span className="text-blue-400">{window.webkitSpeechRecognition ? 'Available' : 'Not Available'}</span></div>
+              <div>Browser Support: <span className="text-blue-400">{browserSupportsSpeechRecognition ? 'Yes' : 'No'}</span></div>
+              <div className="mt-2 text-yellow-300">
+                For speech recognition to work:
+                <ul className="list-disc list-inside mt-1 text-xs">
+                  <li>Use Chrome, Edge, or Safari browser</li>
+                  <li>Ensure you're on HTTPS (not HTTP)</li>
+                  <li>Allow microphone permissions</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Input Area */}
         <div className="glass rounded-xl p-4 border border-white/10">
