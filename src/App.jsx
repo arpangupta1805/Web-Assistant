@@ -63,7 +63,6 @@ function App() {
     
     // Initialize speech recognition with enhanced checking
     const initSpeech = () => {
-      console.log('Initializing speech recognition...');
       
       // First, try to initialize the speech recognition API
       const initResult = initializeSpeechRecognition();
@@ -82,9 +81,6 @@ function App() {
         return;
       }
       
-      // Check browser support from react-speech-recognition
-      console.log('browserSupportsSpeechRecognition:', browserSupportsSpeechRecognition);
-      
       if (!browserSupportsSpeechRecognition) {
         console.warn('Browser does not support speech recognition (react-speech-recognition)');
         addNotification('Speech recognition not supported in this browser. Try Chrome or Edge.', 'warning');
@@ -101,7 +97,6 @@ function App() {
       }
       
       setSpeechRecognitionSupported(true);
-      console.log('Speech recognition initialized successfully');
       addNotification('Speech recognition is ready! 🎤', 'success');
     };
     
@@ -207,7 +202,6 @@ function App() {
         };
 
         SpeechRecognition.onEnd = () => {
-          console.log('React speech recognition ended');
           setIsListening(false);
         };
       }
@@ -315,10 +309,8 @@ function App() {
           timestamp: new Date(msg.timestamp)
         }));
         setMessages(loadedMessages);
-        console.log(`Loaded ${loadedMessages.length} messages from localStorage`);
         
         if (chatData.trimmed) {
-          console.log(`Chat history was previously trimmed on ${chatData.trimmedAt}`);
         }
       }
     } catch (error) {
@@ -329,7 +321,6 @@ function App() {
   const clearChatHistory = () => {
     setMessages([]);
     localStorage.removeItem('dhanush_chat_history');
-    console.log('Chat history cleared');
   };
 
   const initializeSocketConnection = () => {
@@ -337,12 +328,10 @@ function App() {
     
     socketRef.current.on('connect', () => {
       setIsConnected(true);
-      console.log('Connected to server');
     });
 
     socketRef.current.on('disconnect', () => {
       setIsConnected(false);
-      console.log('Disconnected from server');
     });
 
     socketRef.current.on('ai_response_chunk', (data) => {
@@ -409,7 +398,6 @@ function App() {
 
   // Function to speak any message
   const handleActionCompleted = (data) => {
-    console.log('Action completed:', data);
     if (data.type === 'website_opened') {
       // Don't add message or speak, it's already handled in the main response
     } else if (data.type === 'music_playing') {
@@ -421,7 +409,6 @@ function App() {
   };
 
   const handleOpenUrl = (data) => {
-    console.log('Received open_url event:', data);
     
     if (data.url) {
       // Automatically open URL in a new tab
@@ -435,7 +422,6 @@ function App() {
         : `🔗 Opening: ${data.url}`;
       
       addNotification(notificationMessage, 'success');
-      console.log(notificationMessage);
     }
   };
 
@@ -519,7 +505,6 @@ function App() {
   // Speech recognition functions
   const handleAutoStop = () => {
     if (listening) {
-      console.log('Auto-stopping listening due to silence');
       stopListening();
       addNotification('Stopped listening due to silence', 'info');
     }
@@ -555,7 +540,6 @@ function App() {
       // Play start beep
       playStartBeep();
       
-      console.log('Starting speech recognition...');
       
       let success = false;
       if (enhancedSpeechRecognition.isSupported) {
@@ -588,7 +572,6 @@ function App() {
       }
       
       if (success) {
-        console.log('Speech recognition started successfully');
         const message = autoStopEnabled 
           ? 'Listening... Will auto-stop when you stop speaking'
           : 'Listening... Click mic to stop';
@@ -722,7 +705,6 @@ function App() {
               } underline transition-colors duration-200 break-all inline-flex items-center gap-1`}
               onClick={(e) => {
                 e.stopPropagation();
-                console.log('User clicked URL:', part);
               }}
             >
               {isYouTube && <Youtube className="w-4 h-4 inline" />}
@@ -791,10 +773,6 @@ function App() {
               </button>
             )}
             
-            {/* Settings */}
-            <button className="btn-secondary p-2">
-              <Settings className="w-4 h-4" />
-            </button>
           </div>
         </div>
       </header>
